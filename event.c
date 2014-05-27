@@ -42,14 +42,6 @@ int event_init( void ) {
 		events[i].control_type = config->iface.controls[i].control_type;
 		events[i].control_id = config->iface.controls[i].control_id;
 		events[i].value = config->iface.controls[i].value;
-		/* printf("%s: %s%d %s%d = %d\n",
-			event_name(i),
-			device_name(events[i].device_type),
-			events[i].device_id,
-			control_name(events[i].control_type),
-			events[i].control_id,
-			events[i].value
-		); */
 	}
 	
 	return 0;
@@ -77,6 +69,14 @@ int event_set( int id, struct event *event ) {
 		return -1;
 	}
 	memcpy( &events[id], event, sizeof(struct event) );
+	printf("%s: %s%d %s = %d\n",
+        event_name(id),
+        device_name(events[id].device_type),
+        events[id].device_id,
+        control_name(events[id].control_type),
+        events[id].value
+        );
+
 	return 0;
 }
 
@@ -102,7 +102,10 @@ int event_poll( void ) {
 		if( sdl_event.type == SDL_QUIT ) {
 			event = EVENT_QUIT;
 		}
+
+
 		for( i = 1 ; i < NUM_EVENTS ; i++ ) {
+
 			if( events[i].device_type == DEV_KEYBOARD ) {
 				if( sdl_event.type == SDL_KEYDOWN && sdl_event.key.keysym.sym == events[i].value ) {
 					event = i;
@@ -262,6 +265,7 @@ int event_probe( int timeout, struct event *event ) {
 		}
 		SDL_Delay( 10 );
 		timeout -= 10;
+
 	}
 	return 0;
 }
