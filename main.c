@@ -46,10 +46,8 @@ void bail( void ) {
 	exit( -1 );
 }
 
-int main( int argc, char *arvg[] ) {
-	int quit = 0;
+int main( void ) {
 	int config_status = 0;
-	int event;
 
 #ifdef __WIN32__
 	freopen( "cabrio.out", "w", stdout );
@@ -79,5 +77,5 @@ int main( int argc, char *arvg[] ) {
 
 	setup(); 
 
+	return 0;
 }
-
