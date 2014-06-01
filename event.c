@@ -69,7 +69,7 @@ int event_set( int id, struct event *event ) {
 		return -1;
 	}
 	memcpy( &events[id], event, sizeof(struct event) );
-	printf("%s: %s%d %s SDL_KEYCODE = %d axis = %d \n",
+	printf("%s: %s%d %s SDL_KEYCODE = %d typeaxis = %d \n",
         event_name(id),
         device_name(events[id].device_type),
         events[id].device_id,
