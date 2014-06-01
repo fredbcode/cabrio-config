@@ -76,6 +76,6 @@ int main( void ) {
 		bail();
 
 	setup(); 
-
+	clean_up();
 	return 0;
 }
