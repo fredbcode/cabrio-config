@@ -2156,7 +2156,6 @@ int config_new( void ) {
 	else {
 		int i;
 		struct config_param *prev_param = NULL;
-		struct config_category *platform_catgeory;
 		const int num_params = 4;
 		const char *params[] = { "-nowindow", "-skip_gameinfo", "-switchres", "-joystick" };
 		const char *keys[] = {
@@ -2166,8 +2165,14 @@ int config_new( void ) {
 			"left",  		/* EVENT_LEFT */
 			"right", 		/* EVENT_RIGHT */
 			"return",		/* EVENT_SELECT */
-			"backspace",	/* EVENT_BACK */
-			"escape"		/* EVENT_QUIT */
+			"backspace",		/* EVENT_BACK */
+			"escape",		/* EVENT_QUIT */
+                        "list1",                /* EVENT_CALL LIST1 */
+                        "list2",                /* EVENT_CALL LIST2 */
+                        "list3",                /* EVENT_CALL LIST3 */
+                        "list4",                /* EVENT_CALL LIST4 */
+                        "list5",                 /* EVENT_CALL LIST5 */
+
 		};
 
 		emulator->id = 0;
@@ -2214,7 +2219,6 @@ int config_new( void ) {
 		config.iface.prune_menus = 1;
 		
 		/* Ensure the game list category has id 0 - we need to track it later */
-		platform_catgeory = config_category( default_label_lists );
 		strncpy( config.iface.labels.label_all, default_label_all, CONFIG_LABEL_LENGTH );
 		strncpy( config.iface.labels.label_platform, default_label_platform, CONFIG_LABEL_LENGTH );		
 		strncpy( config.iface.labels.label_back, default_label_back, CONFIG_LABEL_LENGTH );
