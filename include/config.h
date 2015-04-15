@@ -50,6 +50,7 @@ struct config_emulator {
 	char display_name[CONFIG_NAME_LENGTH];
 	char executable[CONFIG_FILE_NAME_LENGTH];
 	char directory[CONFIG_FILE_NAME_LENGTH];
+	int concat_path;
 	int is_default;
 	struct config_param *params;
 	struct config_platform *platform;
@@ -187,6 +188,7 @@ struct config_theme {
 	int background_transparency;
 	char sounds[NUM_SOUNDS][CONFIG_FILE_NAME_LENGTH];
 	char font_file[CONFIG_FILE_NAME_LENGTH];
+	char music[CONFIG_FILE_NAME_LENGTH];
 	int font_size;
 	struct config_rgb font_rgb;
 	struct config_menu menu;
@@ -207,6 +209,10 @@ struct config_labels {
 struct config_iface {
 	int full_screen;
 	int video_loop;
+	int hide_buttons;
+	int music_volume;
+	int video_sound;
+	int theme_sound;
 	int screen_width;
 	int screen_height;
 	int screen_rotation;
@@ -252,6 +258,8 @@ int config_create( void );
 int config_write( void );
 int config_update( void );
 struct config_image_type *config_image_type( char *name );
+
+void config_resolution_overwrite( int w, int h );
 
 #endif
 

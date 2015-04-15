@@ -11,12 +11,12 @@ enum event_t {
 	EVENT_RIGHT,
 	EVENT_SELECT,
 	EVENT_BACK,
+	EVENT_QUIT,
 	EVENT_LIST1,
 	EVENT_LIST2,
 	EVENT_LIST3,
 	EVENT_LIST4,
 	EVENT_LIST5,
-	EVENT_QUIT,
 	NUM_EVENTS
 };
 
@@ -37,7 +37,8 @@ int event_set( int id, struct event *event );
 struct event *event_get( int id );
 
 void event_flush( void );
-int event_poll( void );
+void event_set_filter( void );
+int event_poll( int event_num );
 int event_probe( int timeout, struct event *event );
 int event_process( int e );
 int event_id( char *name );

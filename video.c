@@ -4,23 +4,24 @@
  * and a tutorial by Martin Bohme (boehme@inb.uni-luebeckREMOVETHIS.de)
  */
 
-#include <SDL/SDL.h>
-#include <SDL/SDL_audio.h>
+#include <SDL2/SDL.h>
+#include <SDL2/SDL_audio.h>
 #include "video.h"
 #include "sound.h"
 #include "packet.h"
 #include "frame.h"
 #include "config.h"
 #include "ogl.h"
+#include <unistd.h>
 
-#define AUDIO_BUFFER_SIZE ((AVCODEC_MAX_AUDIO_FRAME_SIZE * 3) / 2)
+#define AUDIO_BUFFER_SIZE ((192000 * 3) / 2)
 static const int VIDEO_SIZE = 256;
-static const int VIDEO_SIZE_SCALE = 768;
+static const int VIDEO_SIZE_SCALE = 512;
 static const int CONV_FORMAT = PIX_FMT_RGB24;
 static const int VIDEO_BPP = 3;
 static const int MAX_QUEUE_PACKETS = 20;
 static const int QUEUE_FULL_DELAY = 10;
-static const GLfloat VIDEO_SCALE = 0.005;
+//static const GLfloat VIDEO_SCALE = 0.005;
 static const int MAX_QUEUE_FRAMES = 30;
 static const int SAMPLES = 1024;
 static const float FUDGE_FACTOR = 0.02;
@@ -50,12 +51,11 @@ SDL_AudioSpec audio_spec;
 static int audio_open = 0;
 
 static SDL_Thread *reader_thread = NULL;
-static int stop = 0;
 static int audio_running = 0;
-static int reader_running = 0;
 static int got_texture = 0;
 static struct texture *texture;
-
+static int stop = 0;
+int reader_running = 0;
 int video_init( void ) {
 	avcodec_register_all();
 	av_register_all();
@@ -76,7 +76,7 @@ int video_init( void ) {
 void video_free( void ) {
 	video_close();
 
-	if( conv_frame );	
+	if( conv_frame )	
 		av_free( conv_frame );
 	conv_frame = NULL;
 }
@@ -84,15 +84,17 @@ void video_free( void ) {
 void video_close( void ) {
 	int timeout = 10;
 	stop = 1;
+	const struct config *config = config_get();
 
 	packet_queue_flush( &audio_queue );
 	frame_queue_flush( &video_queue );
 
 	while( (reader_running || audio_running) && timeout-- )
 		SDL_Delay( 10 );
-
-	if( audio_open )
-		SDL_CloseAudio();
+	if (config->iface.video_sound) {
+		if( audio_open )
+			SDL_CloseAudio();
+	}
 	audio_open = 0;
 
 	if( video_codec_context )
@@ -167,47 +169,130 @@ int video_decode_video_frame( AVPacket *packet ) {
 int video_decode_audio_frame( AVCodecContext *context, uint8_t *buffer, int buffer_size ) {
 	static AVPacket packet;
 	int used, data_size;
+	int i;
+#if LIBAVCODEC_VERSION_MAJOR > 53
+// 	Libavcodec54
+	int plane_size;
+	int sampleIndex, channelIndex;
+	AVFrame * frame = avcodec_alloc_frame ();
+#endif /* LIBAVCODEC_VERSION_MAJOR > 53 */
 	for(;;) {
-		while( audio_packet.size > 0 ) {
-			data_size = buffer_size;
-			// Todo depreciated //
-			used = avcodec_decode_audio3( context, (int16_t *)audio_buffer, &data_size,
-				&audio_packet);
-			if( used < 0 ) {
-				/* if error, skip frame */
-				audio_packet.size = 0;
-				break;
-			}
-			audio_packet.data += used;
-			audio_packet.size -= used;
-			
-			if( data_size <= 0 ) {
-				/* No data yet, get more frames */
-				continue;
-			}
-			
+		while (audio_packet.size > 0) {
+#if LIBAVCODEC_VERSION_MAJOR > 53
+		used = avcodec_decode_audio4( context, frame, &data_size, &audio_packet);
+		if( used < 0 ) {
+			// if error, skip frame //
+			fprintf(stderr, "Error while decoding\n");
+			audio_packet.size = 0;
+			break;
+		}
+		audio_packet.data += used;
+		audio_packet.size -= used;
+		audio_packet.dts = AV_NOPTS_VALUE;
+		audio_packet.pts = AV_NOPTS_VALUE;
+		if( data_size <= 0 ) {
+		// No data yet, get more frames //
+			continue;
+		}
+						
+
+		// if a frame has been decoded, output it //
+			data_size = av_samples_get_buffer_size(&plane_size, context->channels,frame->nb_samples, context->sample_fmt, 1);
 			audio_clock += (double)data_size /
 				(double)(format_context->streams[audio_stream]->codec->sample_rate *
-				(2 * format_context->streams[audio_stream]->codec->channels));
-			/* We have data, return it and come back for more later */
-			return data_size;
+				(sizeof(float) * format_context->streams[audio_stream]->codec->channels));
+
+			// We need to convert the decoded frame to the right format (AUDIO_S16SYS)
+			// It may be a better idea to use dedicated function rather than manualy performing 
+			// the conversion.
+			data_size = 0;
+			if (context->sample_fmt == AV_SAMPLE_FMT_FLTP) {
+				int16_t* buffer16 = (int16_t*)buffer;			
+				for (sampleIndex = 0; sampleIndex < frame->nb_samples; sampleIndex++) {
+					for (channelIndex = 0; channelIndex < context->channels; channelIndex++) {
+						float* extended_data = (float*)(frame->extended_data[channelIndex]);
+						float sample = extended_data[sampleIndex];
+
+
+						if (sample < -1.0f) {
+							sample = -1.0f;
+						} else if (sample > 1.0f) {
+							sample = 1.0f;
+						}
+						buffer16[(sampleIndex * context->channels + channelIndex)] = (int16_t)(sample * 32767.0f);
+					 }
+				  }
+
+				  data_size = context->channels * frame->nb_samples * sizeof(int16_t);
+			}
+			else if (context->sample_fmt == AV_SAMPLE_FMT_S16P) {
+				// Note : planar size is in frame->linesize[0] for all plans
+				// as they must have the same size.
+				int16_t* buffer16 = (int16_t*) buffer;
+				for (channelIndex = 0; channelIndex < context->channels; channelIndex++) {
+					int16_t* extended_data = (int16_t*)(frame->data[channelIndex]);
+					for (i = 0; i < frame->linesize[0] / 2; i++) {
+						int16_t sample = extended_data[i];
+						buffer16[channelIndex + i * 2] = sample;
+					}
+				}
+				data_size = context->channels * frame->linesize[0];
+			} 
+			else
+			{
+				data_size = -1;
+			}
+ 
+			av_free(frame);
+			return data_size; 
 		}
+
+
+#endif /* LIBAVCODEC_VERSION_MAJOR > 53 */
+// Libavcodec53
+#if LIBAVCODEC_VERSION_MAJOR <= 53
+
+		data_size = buffer_size;
+		// Todo depreciated //
+		used = avcodec_decode_audio3( context, (int16_t *)audio_buffer, &data_size,
+			&audio_packet);
+		if( used < 0 ) {
+			// if error, skip frame //
+			audio_packet.size = 0;
+			break;
+		}
+		audio_packet.data += used;
+		audio_packet.size -= used;
+			
+		if( data_size <= 0 ) {
+			// No data yet, get more frames //
+			continue;
+		}
+			
+		audio_clock += (double)data_size /
+			(double)(format_context->streams[audio_stream]->codec->sample_rate *
+			(2 * format_context->streams[audio_stream]->codec->channels));
+		// We have data, return it and come back for more later //
+		return data_size;
+		}
+
+#endif /* LIBAVCODEC_VERSION_MAJOR < 53 */
 		if( packet.data )
 			av_free_packet( &packet );
 
 		if( stop ) {
+			av_free(frame);
 			audio_running = 0;
 			return -1;
 		}
 
-		if( packet_queue_get( &audio_queue, &packet, 1 ) < 0 )
+		if( packet_queue_get( &audio_queue, &audio_packet, 1 ) < 0 ) {
+			av_free(frame);
 			return -1;
+		}
+		if( audio_packet.pts != AV_NOPTS_VALUE ) {
+			audio_clock = audio_packet.pts * av_q2d( format_context->streams[audio_stream]->time_base );
 
-		audio_packet.data = packet.data;
-		audio_packet.size = packet.size;
-
-		if( packet.pts != AV_NOPTS_VALUE ) {
-			audio_clock = packet.pts * av_q2d( format_context->streams[audio_stream]->time_base );
 		}
 	}
 }
@@ -215,7 +300,7 @@ int video_decode_audio_frame( AVCodecContext *context, uint8_t *buffer, int buff
 void video_audio_callback( void *userdata, Uint8 *stream, int length ) {
 	AVCodecContext *context = (AVCodecContext*)userdata;
 	int used, audio_size;
-	
+
 	while( length > 0 ) {
 		if(audio_buffer_index >= audio_buffer_size) {
 			/* We have already sent all our data; get more */
@@ -249,16 +334,12 @@ void video_release_buffer( struct AVCodecContext *c, AVFrame *f ) {
 
 int video_reader_thread( void *data ) {
 	static AVPacket packet;
-
 	const struct config *config = config_get();
 
 	if( !format_context || !video_codec_context || !video_buffer )
 		return -1;
-
 	reader_running = 1;
-	int stop_sound = 0;
 	int value;
-
 	while( !stop ) {
 		if( video_queue.frames >= MAX_QUEUE_FRAMES || audio_queue.packets >= MAX_QUEUE_PACKETS ) {
 			SDL_Delay( QUEUE_FULL_DELAY );
@@ -269,25 +350,25 @@ int video_reader_thread( void *data ) {
 				if( value == video_stream ) { 
 					video_decode_video_frame( &packet );
 				}
-				if (stop_sound != 1){ 
-					packet_queue_put( &audio_queue, &packet );
+				if (!config->iface.video_sound) { 
+				// Yes I know very ugly	ishould find another way ...
+					usleep( 20000 );
 				} else {
-					// something here but why ? //
 					packet_queue_put( &audio_queue, &packet );
 				}  
 				if (( value != video_stream ) && (value != audio_stream && audio_codec_context))
 					av_free_packet( &packet );
 			} else {
 				// stop video loop
-                                if(!config->iface.video_loop) 
-                                	stop = 1;
-				av_seek_frame( format_context, -1, 0, 0 );
-				// TODO find a way to just stop sound - headhache fuze - second loop -
-				stop_sound = 1;
+                                if(!config->iface.video_loop) {
+					stop = 1;
+					video_close();
+				} else {
+					av_seek_frame( format_context, -1, 0, 0 );
+				}
 			}
 		}
 	}
-
 	reader_running = 0;
 	return 0;
 }
@@ -295,6 +376,7 @@ int video_reader_thread( void *data ) {
 int video_open( const char *filename ) {
 	int i = -1;
 	
+	const struct config *config = config_get();
 	format_context = NULL;
 	video_codec_context = NULL;
 	video_stream = -1;
@@ -305,16 +387,16 @@ int video_open( const char *filename ) {
 	audio_buffer_size = 0;
 	audio_buffer_index = 0;
 
-    	av_init_packet(&audio_packet);
+	av_init_packet(&audio_packet);
 	
 	if( !filename )
 		return -1;
 
-	if( avformat_open_input( &format_context, filename, NULL, 0 ) != 0 ) {	
+	if( avformat_open_input( &format_context, filename, NULL, 0 ) != 0 ) {
 		fprintf( stderr, "Warning: Error opening video file '%s'\n", filename );
 		return -1;
 	}
-	
+
 	if( avformat_find_stream_info( format_context, NULL ) < 0 ) {
 		fprintf( stderr, "Warning: Error reading stream info from '%s'\n", filename );
 		return -1;
@@ -335,12 +417,13 @@ int video_open( const char *filename ) {
 		return -1;
 	}
 	
-    video_codec_context->release_buffer = video_release_buffer;
+	video_codec_context->release_buffer = video_release_buffer;
 	video_codec = avcodec_find_decoder( video_codec_context->codec_id );
 	if( !video_codec ) {
 		fprintf( stderr, "Warning: Video codec in video '%s' not supported\n", filename );
 		return -1;
 	}
+	
 	if( avcodec_open2( video_codec_context, video_codec, NULL ) != 0 ) {
 		fprintf( stderr, "Warning: Couldn't open video codec '%s' for '%s'\n", video_codec->name, filename );
 		return -1;
@@ -357,6 +440,9 @@ int video_open( const char *filename ) {
 
 	avpicture_fill( (AVPicture*)conv_frame, video_buffer, CONV_FORMAT, VIDEO_SIZE, VIDEO_SIZE );
 
+     	if (music && config->iface.video_sound){
+        	Mix_HaltMusic();
+	} 
 	if( audio_codec_context ) {
 		audio_codec = avcodec_find_decoder( audio_codec_context->codec_id );
 		if( !audio_codec ) {
@@ -378,19 +464,23 @@ int video_open( const char *filename ) {
 				desired.samples = SAMPLES;
 				desired.callback = video_audio_callback;
 				desired.userdata = audio_codec_context;
-
-				sound_close_mixer();
-
-				if( SDL_OpenAudio( &desired, &audio_spec ) < 0 ) {
-					fprintf( stderr, "Warning: Couldn't open audio for video: %s\n", SDL_GetError() );
-					audio_codec_context = NULL;
-				}
-				else {
-					packet_queue_flush( &audio_queue );
-					audio_open = 1;
-					audio_running = 1;
-					SDL_PauseAudio( 0 );
-				}
+				if (config->iface.video_sound) {
+					sound_close_mixer();
+					if ( SDL_OpenAudio( &desired, &audio_spec ) < 0 ) {
+						fprintf( stderr, "Warning: Couldn't open audio for video: %s\n", SDL_GetError() );
+						audio_codec_context = NULL;
+					} else {
+						packet_queue_flush( &audio_queue );
+						audio_open = 1;
+						audio_running = 1;
+						SDL_PauseAudio( 0 );
+					} 
+				} else {
+						audio_open = 1;
+						audio_running = 1;
+						SDL_PauseAudio( 0 );
+				}	
+				     
 			}
 		}
 	}
@@ -404,12 +494,11 @@ int video_open( const char *filename ) {
 	got_texture = 0;
 	
 	stop = 0;
-	reader_thread = SDL_CreateThread( video_reader_thread, NULL );
+	reader_thread = SDL_CreateThread( video_reader_thread, NULL, NULL );
 	if( !reader_thread ) {
 		fprintf( stderr, "Warning: Couldn't start video reader thread\n" );
 		return -1;
 	}
-
 	return 0;
 }
 

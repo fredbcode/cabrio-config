@@ -4,7 +4,7 @@
 enum focus_t {
 	FOCUS_MENU,
 	FOCUS_SUBMENU,
-	FOCUS_GAMESEL
+	FOCUS_GAMESEL,
 };
 
 int focus_has( void );
